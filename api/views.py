@@ -46,7 +46,8 @@ from .serializers import (
     PosttSerializer
 )
 from . import models as ms
-from .app_account import app_account_email, get_app_account
+from . import app_like_requests
+from .app_account import app_account_email, app_account_id_for, get_app_account
 from .notifications import retire_notification, create_notification
 from .signals import notify_task_tags_on_publish
 from . import task_saves
@@ -323,6 +324,13 @@ def apply_task_filters(queryset, params, owner_id=None, request_user=None, categ
         queryset = queryset.filter(user__profile__is_verified=True)
     if recommended_users_only in ["true", "1", "True", True]:
         queryset = queryset.filter(user__profile__is_recommended=True)
+    if params.get("app_liked_only") in ["true", "1", "True", True]:
+        # Con Exists (no un join) para no alterar el conteo de likes al ordenar.
+        queryset = queryset.filter(Exists(
+            ms.Like.objects.filter(task=OuterRef("pk")).filter(app_like_requests.app_like_q())
+        ))
+    if params.get("admin_users_only") in ["true", "1", "True", True]:
+        queryset = queryset.filter(Q(user__is_staff=True) | Q(user__is_superuser=True))
 
     if sort_by == "likes":
         queryset = queryset.annotate(like_count=Count("likes")).order_by("-like_count", "-created_at")
@@ -555,8 +563,9 @@ def user_social_stats(request, user_id):
         # Visitas al perfil (últimos 30 días): solo su dueño las ve.
         "visits_30d": visit_counts(target)["visits_30d"] if is_owner else None,
     }
-    if request.user.is_superuser:
-        # Solo el superadmin ve el estado de la cuenta, para el menu de moderacion del perfil.
+    if request.user.is_superuser or request.user.is_staff:
+        # Staff y superadmin ven el estado de la cuenta, para el menu de moderacion del perfil
+        # (el staff solo puede verificar; lo demás es del superadmin).
         data["admin_state"] = {
             "is_active": target.is_active,
             "is_staff": target.is_staff,
@@ -1401,6 +1410,7 @@ def story_viewers(request, story_id):
                 "image": image,
                 "user_image": image,
                 "profile": ProfileSerializer(user.profile).data,
+                "is_app": user_id == str(app_account_id_for(request)),
                 "viewed": False,
                 "liked": False,
                 "viewed_at": None,
@@ -1750,6 +1760,24 @@ def share_task_to_story(request):
 # FUNCIONES DE COMPATIBILIDAD URLS
 # ============================================================================
 
+def _mark_app_account(rows, request, app_likers=()):
+    """Marca con `is_app` a la cuenta de la App y a quien dio like como la App (`app_likers`):
+    la lista los pone en la pestaña App. `is_app_member` (staff o admin) solo pone la etiqueta."""
+    app_ids = {str(user_id) for user_id in app_likers}
+    app_id = app_account_id_for(request)
+    if app_id is not None:
+        app_ids.add(str(app_id))
+    member_ids = {
+        str(user_id) for user_id in User.objects.filter(
+            Q(is_staff=True) | Q(is_superuser=True), id__in=[row.get("id") for row in rows if row.get("id")],
+        ).values_list("id", flat=True)
+    }
+    for row in rows:
+        row["is_app"] = str(row.get("id")) in app_ids
+        row["is_app_member"] = row["is_app"] or str(row.get("id")) in member_ids
+    return rows
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def users_who_liked_task(request, task_id):
@@ -1788,7 +1816,8 @@ def users_who_liked_task(request, task_id):
             "profile": ProfileSerializer(p).data if p else None
         })
 
-    return Response(out, status=status.HTTP_200_OK)
+    app_likers = ms.Like.objects.filter(task_id=task_id, as_app=True).values_list("user_id", flat=True)
+    return Response(_mark_app_account(out, request, app_likers), status=status.HTTP_200_OK)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1904,7 +1933,18 @@ class SharedTaskListCreateView(generics.ListCreateAPIView):
 
         if recommended_users_only in ['true', '1', 'True', True]:
             qs = qs.filter(shared_by__profile__is_recommended=True) | qs.filter(task__user__profile__is_recommended=True)
-            
+
+        if self.request.query_params.get("app_liked_only") in ['true', '1', 'True', True]:
+            qs = qs.filter(Exists(
+                ms.Like.objects.filter(task=OuterRef("task_id")).filter(app_like_requests.app_like_q())
+            ))
+
+        if self.request.query_params.get("admin_users_only") in ['true', '1', 'True', True]:
+            qs = qs.filter(
+                Q(shared_by__is_staff=True) | Q(shared_by__is_superuser=True)
+                | Q(task__user__is_staff=True) | Q(task__user__is_superuser=True)
+            )
+
         qs = qs.select_related(
             "task",
             "task__user",
@@ -2359,7 +2399,10 @@ def list_likes(request, profile_id):
         # Usamos `profile.user` para que coincida con el modelo LikeP.
         viewer_has_liked = ms.LikeP.objects.filter(user=request.user, profile=profile.user).exists()
 
-    return Response({ 'results': serializer.data, 'viewer_has_liked': viewer_has_liked })
+    return Response({
+        'results': _mark_app_account(serializer.data, request),
+        'viewer_has_liked': viewer_has_liked,
+    })
 
 @api_view(["GET", "POST", "DELETE"])
 @permission_classes([IsAuthenticated])
@@ -2747,7 +2790,8 @@ class FeedView(generics.ListAPIView):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def admin_verify_user(request, user_id):
-    if not request.user.is_superuser: return Response(status=403)
+    # Staff y superadmins pueden verificar perfiles.
+    if not (request.user.is_staff or request.user.is_superuser): return Response(status=403)
     user = get_object_or_404(User, id=user_id)
     is_verified = bool(request.data.get("is_verified", True))
     with transaction.atomic():
@@ -2860,17 +2904,31 @@ def admin_set_user_active(request, user_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def admin_set_user_role(request, user_id):
+    """Superadmin: hacer o quitar staff ({is_staff}) o admin ({is_superuser}) a otra cuenta.
+
+    Un admin siempre es staff; al quitarle admin queda como staff."""
     if not request.user.is_superuser:
         raise PermissionDenied("Solo un superadministrador puede administrar roles.")
     target = get_object_or_404(User, id=user_id)
-    is_staff = request.data.get("is_staff")
-    if not isinstance(is_staff, bool):
-        raise ValidationError({"is_staff": "Debe ser un valor booleano."})
-    if target.is_superuser:
-        raise ValidationError({"is_staff": "El rol de superadministrador no se puede modificar aquí."})
-    target.is_staff = is_staff
-    target.save(update_fields=["is_staff"])
-    return Response({"id": str(target.id), "is_staff": target.is_staff})
+    if target.id == request.user.id:
+        raise ValidationError({"detail": "No puedes cambiar tu propio rol."})
+    changes = {}
+    for field in ("is_staff", "is_superuser"):
+        if field in request.data:
+            value = request.data.get(field)
+            if not isinstance(value, bool):
+                raise ValidationError({field: "Debe ser un valor booleano."})
+            changes[field] = value
+    if not changes:
+        raise ValidationError({"detail": "Indica is_staff o is_superuser."})
+    if changes.get("is_superuser"):
+        changes["is_staff"] = True
+    elif changes.get("is_staff") is False and changes.get("is_superuser", target.is_superuser):
+        raise ValidationError({"is_staff": "Primero quítale el rol de admin."})
+    for field, value in changes.items():
+        setattr(target, field, value)
+    target.save(update_fields=list(changes))
+    return Response({"id": str(target.id), "is_staff": target.is_staff, "is_superuser": target.is_superuser})
 
 
 def _reported_target_exists(target_type, target_id):
@@ -3020,7 +3078,7 @@ def _requested_like(request):
 
 def _app_account_or_error(request):
     """(cuenta de la App, None) o (None, respuesta de error) si no hay permiso o no existe."""
-    if not request.user.is_superuser:
+    if not (request.user.is_staff or request.user.is_superuser):
         return None, Response({"detail": "Forbidden"}, status=403)
     app_account = get_app_account()
     if app_account is None:
@@ -3034,28 +3092,33 @@ def _app_account_or_error(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def admin_app_like_task(request, task_id):
-    """Superadmin: dar o quitar el like de la App (APP_ACCOUNT_EMAIL) a una tarea. Body: {liked}."""
-    app_account, error = _app_account_or_error(request)
-    if error:
-        return error
+    """Staff o superadmin: dar o quitar su like "como la App" a una tarea. Body: {liked}.
 
-    task = get_object_or_404(ms.Task, id=task_id)
+    El like queda a su nombre marcado `as_app` (sale en la pestaña App de la lista). Al darlo,
+    se avisa al resto del equipo para que también lo dé."""
+    if not (request.user.is_staff or request.user.is_superuser):
+        return Response({"detail": "Forbidden"}, status=403)
+
+    task = get_object_or_404(visible_tasks_for(request.user), id=task_id)
     if _requested_like(request):
-        ensure_visible_like(app_account, task)
+        like, _ = ensure_visible_like(request.user, task)
+        if not like.as_app:
+            like.as_app = True
+            like.save(update_fields=["as_app"])
+        app_like_requests.notify_app_like_request(task, request.user)
     else:
-        ms.Like.objects.filter(user=app_account, task=task).delete()
+        ms.Like.objects.filter(user=request.user, task=task, as_app=True).delete()
 
     return Response({
         "task_id": task.id,
-        "liked": ms.Like.objects.filter(user=app_account, task=task).exists(),
+        "liked": ms.Like.objects.filter(user=request.user, task=task, as_app=True).exists(),
         "likes_count": task.likes.count(),
-        "app_account_id": app_account.id,
     })
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def admin_app_like_profile(request, profile_id):
-    """Superadmin: dar o quitar el like de la App (APP_ACCOUNT_EMAIL) a un perfil. Body: {liked}."""
+    """Staff o superadmin: dar o quitar el like de la App (APP_ACCOUNT_EMAIL) a un perfil. Body: {liked}."""
     app_account, error = _app_account_or_error(request)
     if error:
         return error

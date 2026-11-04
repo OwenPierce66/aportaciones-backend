@@ -70,7 +70,7 @@ class FavoriteProfileSocialStatsTests(TestCase):
         self.assertEqual(response.data["favorites_count"], 1)
         self.assertFalse(response.data["is_favorited"])
 
-    def test_admin_state_only_for_superuser(self):
+    def test_admin_state_only_for_staff_and_superuser(self):
         response = self.client.get(self.stats_url)
         self.assertNotIn("admin_state", response.data)
 
@@ -78,7 +78,7 @@ class FavoriteProfileSocialStatsTests(TestCase):
             username="staffer", email="staffer@example.com", password="test-password", is_staff=True
         )
         self.client.force_authenticate(staff)
-        self.assertNotIn("admin_state", self.client.get(self.stats_url).data)
+        self.assertIn("admin_state", self.client.get(self.stats_url).data)
 
         admin = User.objects.create_superuser(
             username="boss", email="boss@example.com", password="test-password"

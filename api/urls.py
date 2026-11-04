@@ -17,6 +17,7 @@ from . import testimonials
 from . import profile_activity
 from . import profile_visits
 from . import task_stats
+from . import task_map
 from . import save_collections
 from . import task_save_views
 # ─── Vistas JWT con throttling propio ────────────────────────────────────────
@@ -34,6 +35,7 @@ urlpatterns = [
     path('notifications/unread-count/', notification_views.unread_count, name='notification-unread-count'),
     path('notifications/mark-all-read/', notification_views.mark_all_read, name='notification-mark-all-read'),
     path('notifications/<uuid:notification_id>/mark-read/', notification_views.mark_read, name='notification-mark-read'),
+    path('notifications/<uuid:notification_id>/seen/', notification_views.set_app_like_request_seen, name='notification-app-like-seen'),
     path('notifications/<uuid:notification_id>/', notification_views.delete_notification, name='notification-delete'),
 
     # Autenticación y Usuarios
@@ -75,6 +77,7 @@ urlpatterns = [
     path('stories/<uuid:story_id>/viewers/', views.story_viewers, name='story-viewers'),
     path('stories/<uuid:story_id>/save/', views.save_story_to_aportaciones, name='story-save'),
     path('feed/', views.FeedView.as_view(), name='feed'),
+    path('tasks/map/', task_map.map_tasks, name='task-map'),
     path('tasks/<uuid:id>/', views.TaskDetailView.as_view(), name='task-detail'),
     path('tasks/<uuid:task_id>/like/', views.toggle_task_like, name='task-like'),
     path('tasks/<uuid:task_id>/stats/', task_stats.task_stats, name='task-stats'),

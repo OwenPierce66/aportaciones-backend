@@ -91,6 +91,52 @@ class AdminManagementTests(TestCase):
         self.owner.refresh_from_db()
         self.assertTrue(self.owner.is_staff)
 
+    def test_staff_can_verify_but_cannot_change_roles(self):
+        self.client.force_authenticate(self.staff)
+        verified = self.client.post(
+            reverse("admin-verify-user", kwargs={"user_id": self.owner.id}),
+            {"is_verified": True},
+            format="json",
+        )
+        self.assertEqual(verified.status_code, 200)
+        self.owner.profile.refresh_from_db()
+        self.assertTrue(self.owner.profile.is_verified)
+
+        role_url = reverse("admin-user-role", kwargs={"user_id": self.owner.id})
+        for payload in ({"is_staff": True}, {"is_superuser": True}):
+            self.assertEqual(self.client.post(role_url, payload, format="json").status_code, 403)
+        self.owner.refresh_from_db()
+        self.assertFalse(self.owner.is_staff or self.owner.is_superuser)
+
+    def test_superadmin_can_make_and_remove_admins(self):
+        self.client.force_authenticate(self.superadmin)
+        role_url = reverse("admin-user-role", kwargs={"user_id": self.owner.id})
+
+        promoted = self.client.post(role_url, {"is_superuser": True}, format="json")
+        self.assertEqual(promoted.status_code, 200, promoted.data)
+        self.owner.refresh_from_db()
+        self.assertTrue(self.owner.is_superuser and self.owner.is_staff)
+
+        # Un admin no pierde staff sin antes dejar de ser admin.
+        self.assertEqual(self.client.post(role_url, {"is_staff": False}, format="json").status_code, 400)
+
+        demoted = self.client.post(role_url, {"is_superuser": False}, format="json")
+        self.assertEqual(demoted.status_code, 200, demoted.data)
+        self.owner.refresh_from_db()
+        self.assertFalse(self.owner.is_superuser)
+        self.assertTrue(self.owner.is_staff)
+
+    def test_superadmin_cannot_change_own_role(self):
+        self.client.force_authenticate(self.superadmin)
+        response = self.client.post(
+            reverse("admin-user-role", kwargs={"user_id": self.superadmin.id}),
+            {"is_superuser": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.superadmin.refresh_from_db()
+        self.assertTrue(self.superadmin.is_superuser)
+
     def test_superadmin_cannot_suspend_self_or_another_superadmin(self):
         self.client.force_authenticate(self.superadmin)
         response = self.client.post(

@@ -455,6 +455,10 @@ class Task(TimeStampedModel):
     # Modo oculto: solo su dueño la ve, en su perfil, como vista previa de
     # cómo quedaría publicada. Al quitarlo se publica para todos.
     is_hidden = models.BooleanField(_("hidden"), default=False)
+    # "Compartir desde mi ubicación": dónde estaba su autor al publicarla (redondeado a
+    # unos 100 m, ver TaskSerializer._validate_location). Las que la tienen salen en el mapa.
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     # Testimonio escrito en el perfil de `testimonial_for` (pch "testimonios"): una
     # publicación con todas sus funciones que esa persona aprueba antes de que se vea
     # (`testimonial_status`: pending / approved / rejected).
@@ -534,6 +538,8 @@ class Like(TimeStampedModel):
     # Oculto: cuenta en el total pero el nombre no aparece en la lista hasta
     # que la misma persona vuelva a dar like (ver toggle_task_like).
     is_hidden = models.BooleanField(default=False)
+    # Like dado "como la App" por alguien del staff: va en la pestaña App de la lista, con su nombre.
+    as_app = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ("user", "task")

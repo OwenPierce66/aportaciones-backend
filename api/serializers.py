@@ -291,6 +291,8 @@ class SimpleUserSerializer(serializers.ModelSerializer):
     has_liked = serializers.SerializerMethodField()
     is_favorited = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
+    # La cuenta de la App: las listas la ponen en la pestaña App.
+    is_app = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -308,7 +310,14 @@ class SimpleUserSerializer(serializers.ModelSerializer):
             "has_liked",
             "is_favorited",
             "is_following",
+            "is_app",
         ]
+
+    def get_is_app(self, obj):
+        from .app_account import app_account_id_for
+
+        request = self.context.get("request")
+        return request is not None and str(obj.pk) == str(app_account_id_for(request))
 
     def get_is_following(self, obj):
         request = self.context.get("request")
@@ -945,20 +954,42 @@ class TaskSerializer(serializers.ModelSerializer):
         return support_summary(supports)
 
     def get_app_has_liked(self, obj):
-        """¿La cuenta de la App ya dio like? Solo para superadmins (menú "Like de la App")."""
+        """¿Ya di mi like como la App? Solo para staff y superadmins (menú "Like de la App").
+
+        Para la propia cuenta de la App, cualquier like suyo es de la App."""
         request = self.context.get("request")
-        if not request or not getattr(request.user, "is_superuser", False):
+        user = getattr(request, "user", None)
+        if not (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False)):
             return None
-        app_account_id = app_account_id_for(request)
-        if app_account_id is None:
-            return None
+        is_app_account = user.pk == app_account_id_for(request)
         if is_prefetched(obj, "likes"):
-            return any(like.user_id == app_account_id for like in obj.likes.all())
-        return obj.likes.filter(user_id=app_account_id).exists()
+            return any(
+                like.user_id == user.pk and (like.as_app or is_app_account) for like in obj.likes.all()
+            )
+        likes = obj.likes.filter(user_id=user.pk)
+        return likes.exists() if is_app_account else likes.filter(as_app=True).exists()
+
+    # Decimales que se guardan de la ubicación: 3 son unos 100 m (no la casa exacta).
+    LOCATION_DECIMALS = 3
+
+    def _validate_location(self, attrs):
+        """La ubicación va completa (latitud y longitud) o vacía, y se guarda redondeada."""
+        if "latitude" not in attrs and "longitude" not in attrs:
+            return
+        latitude, longitude = attrs.get("latitude"), attrs.get("longitude")
+        if (latitude is None) != (longitude is None):
+            raise serializers.ValidationError({"latitude": "La ubicación necesita latitud y longitud."})
+        if latitude is None:
+            return
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise serializers.ValidationError({"latitude": "La ubicación no es válida."})
+        attrs["latitude"] = round(latitude, self.LOCATION_DECIMALS)
+        attrs["longitude"] = round(longitude, self.LOCATION_DECIMALS)
 
     def validate(self, attrs):
         """Los estados de moderación solo cambian mediante el endpoint de aprobación."""
         self._validate_testimonial(attrs)
+        self._validate_location(attrs)
         instance = getattr(self, "instance", None)
         group = attrs.get("group", getattr(instance, "group", None))
         if group is not None and attrs.get("is_hidden"):

@@ -36,8 +36,9 @@ services:
         - DEV=true
     image: aportaciones-backend-django:latest
     container_name: django-docker
-    command: python manage.py runserver 0.0.0.0:8000 --noreload
-    mem_limit: 256m
+    command: python manage.py runserver 0.0.0.0:8000
+    # Con el recargador automático corren dos procesos de Django: 256m quedaba justo.
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy

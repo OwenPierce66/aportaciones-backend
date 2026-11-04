@@ -12,6 +12,8 @@ from django.utils import timezone
 
 from massaging.models import GroupMessage, GroupMembership, Message, MessageLike
 
+from . import app_like_requests
+
 from .models import (
     CommentTag,
     Favorito,
@@ -300,6 +302,17 @@ def retire_task_like(sender, instance, **kwargs):
     _retire(instance, kwargs.get("origin"))
     if (instance.task.pch or "").casefold() == "peticiones":
         _notify_monthly_petition_top_five()
+
+
+@receiver(post_save, sender=Like)
+def retire_app_like_request_for_liker(sender, instance, created, **kwargs):
+    if created:
+        app_like_requests.retire_for_liker(instance)
+
+
+@receiver(post_delete, sender=Like)
+def retire_app_like_requests_without_app_likes(sender, instance, **kwargs):
+    app_like_requests.retire_if_no_app_likes(instance.task_id)
 
 
 @receiver(post_save, sender=NewPeticionCommentPost)

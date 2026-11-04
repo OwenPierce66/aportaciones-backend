@@ -6,6 +6,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import app_like_requests
 from .models import Notification
 from .notification_serializers import NotificationSerializer
 from .notifications import ensure_story_expiry_notifications
@@ -73,6 +74,25 @@ def mark_all_read(request):
         is_read=False,
     ).update(is_read=True, read_at=now, updated_at=now)
     return Response({"updated": updated})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def set_app_like_request_seen(request, notification_id):
+    """Marca o desmarca como visto el aviso de dar like como la App. Body: {seen}."""
+    notification = get_object_or_404(
+        Notification.objects.select_related("actor"),
+        id=notification_id,
+        recipient=request.user,
+        notification_type=app_like_requests.APP_LIKE_REQUEST,
+    )
+    seen = request.data.get("seen", True)
+    if not isinstance(seen, bool):
+        return Response({"seen": "Debe ser un valor booleano."}, status=status.HTTP_400_BAD_REQUEST)
+    app_like_requests.set_seen(notification, seen)
+    return Response(
+        NotificationSerializer(notification, context={"request": request}).data
+    )
 
 
 @api_view(["DELETE"])
