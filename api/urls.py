@@ -8,6 +8,7 @@ from rest_framework_simplejwt.views import (
 )
 
 from . import account
+from . import google_auth
 from . import push_views
 from . import subscription_views
 from . import petition_support_views
@@ -42,6 +43,7 @@ urlpatterns = [
     # Autenticación y Usuarios
     path('auth/register/', views.RegisterView.as_view(), name='register'),
     path('auth/login/', ThrottledLoginView.as_view(), name='token_obtain_pair'),
+    path('auth/google/', google_auth.google_login, name='google-login'),
     path('auth/refresh/', ThrottledRefreshView.as_view(), name='token_refresh'),
     path('auth/logout/', views.LogoutView.as_view(), name='logout'),
     path('auth/password-reset/', account.password_reset_request, name='password-reset'),

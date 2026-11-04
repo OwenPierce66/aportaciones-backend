@@ -488,6 +488,10 @@ TRANSLATION_MAX_CHARS = int(os.getenv("TRANSLATION_MAX_CHARS", "5000"))
 # Cuenta que representa a la App: el "like de la App" que da un superadmin sale a su nombre.
 APP_ACCOUNT_EMAIL = os.getenv("APP_ACCOUNT_EMAIL", "owen@gmail.com").strip()
 
+# Entrar con Google (ver api/google_auth.py): los IDs de cliente OAuth de la app (web,
+# Android, iOS), separados por comas. Vacío = apagado.
+GOOGLE_CLIENT_IDS = [client_id.strip() for client_id in os.getenv("GOOGLE_CLIENT_IDS", "").split(",") if client_id.strip()]
+
 # Correo de la app: se envía por la API de Brevo porque el plan gratis de Render bloquea SMTP.
 # Sin clave no se envía nada; en desarrollo el correo sale en los logs.
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
