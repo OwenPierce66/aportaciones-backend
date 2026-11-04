@@ -1407,9 +1407,12 @@ class PosttSerializer(MessageExtrasMixin, serializers.ModelSerializer):
     def notify_tagged(self, instance, users, actor):
         from .notifications import create_notification
 
+        from .mentions import display_name
+
         root = instance
         while root.parent_id:
             root = root.parent
+        where = "una respuesta del foro" if instance.parent_id else "una publicación del foro"
         for user in users:
             create_notification(
                 recipient=user,
@@ -1417,7 +1420,11 @@ class PosttSerializer(MessageExtrasMixin, serializers.ModelSerializer):
                 notification_type="forum_tag",
                 target_type="forum_post",
                 target_id=root.pk,
-                data={"text": f"{actor.username or 'Alguien'} te etiquetó en el foro."},
+                data={
+                    "text": f"{display_name(actor)} te etiquetó en {where}.",
+                    "title": root.title,
+                    "excerpt": (instance.content or "")[:140],
+                },
                 dedupe_key=f"forum_tag:{instance.pk}:{user.pk}",
             )
 
@@ -1430,6 +1437,9 @@ class PosttSerializer(MessageExtrasMixin, serializers.ModelSerializer):
         instance = super().create(validated_data)
         if invited_ids and not instance.parent_id:
             self._invite(instance, invited_ids, validated_data["user"])
+        # Ya con los invitados guardados: solo avisa a quien puede verlo.
+        from .mentions import notify_forum_mentions
+        notify_forum_mentions(instance)
         return instance
 
     def update(self, instance, validated_data):
@@ -1437,6 +1447,8 @@ class PosttSerializer(MessageExtrasMixin, serializers.ModelSerializer):
         instance = super().update(instance, validated_data)
         if invited_ids is not None and not instance.parent_id:
             self._invite(instance, invited_ids, self.context["request"].user)
+        from .mentions import notify_forum_mentions
+        notify_forum_mentions(instance)
         return instance
 
     def get_replies(self, obj):
@@ -1474,6 +1486,12 @@ class SharedTaskCommentSerializer(MessageExtrasMixin, serializers.ModelSerialize
     def notify_tagged(self, instance, users, actor):
         from .notifications import create_notification
 
+        from .mentions import display_name
+
+        where = (
+            "una respuesta a un comentario de una publicación compartida" if instance.parent_id
+            else "un comentario de una publicación compartida"
+        )
         for user in users:
             create_notification(
                 recipient=user,
@@ -1481,7 +1499,11 @@ class SharedTaskCommentSerializer(MessageExtrasMixin, serializers.ModelSerialize
                 notification_type="shared_comment_tag",
                 target_type="shared_task",
                 target_id=instance.shared_task_id,
-                data={"text": f"{actor.username or 'Alguien'} te etiquetó en un comentario."},
+                data={
+                    "text": f"{display_name(actor)} te etiquetó en {where}.",
+                    "title": instance.shared_task.task.title,
+                    "excerpt": (instance.text or "")[:140],
+                },
                 dedupe_key=f"shared_comment_tag:{instance.pk}:{user.pk}",
             )
 

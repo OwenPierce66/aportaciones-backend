@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from massaging.models import GroupMessage, GroupMembership, Message, MessageLike
 
-from . import app_like_requests
+from . import app_like_requests, mentions
 
 from .models import (
     CommentTag,
@@ -31,6 +31,9 @@ from .models import (
     Profile,
     SharedTask,
     SharedTaskComment,
+    SubFactores,
+    SubFuentes,
+    SubTask,
     Task,
     TaskSave,
     TaskTag,
@@ -96,10 +99,8 @@ def _excerpt(value, limit=140):
 
 
 def _actor_name(actor):
-    full_name = " ".join(
-        part for part in (actor.first_name, actor.last_name) if part
-    )
-    return actor.username or full_name or actor.email
+    # Nunca el correo: el aviso lo ve otra persona.
+    return mentions.display_name(actor)
 
 
 def _notify(
@@ -141,39 +142,6 @@ def _retire(instance, origin=None):
         ):
             return
     retire_notification(dedupe_key=f"{instance._meta.label_lower}:{instance.pk}")
-
-
-def _notify_comment_mentions(comment):
-    usernames = {
-        match.rstrip(".,;:!?)]}").casefold()
-        for match in re.findall(r"(?<![\w@])@([\w.-]{1,150})", comment.text or "")
-    }
-    if not usernames:
-        return
-
-    users = list(
-        User.objects.annotate(normalized_username=Lower("username"))
-        .filter(normalized_username__in=usernames)
-        .exclude(pk=comment.created_by_id)
-    )
-
-    excerpt = _excerpt(comment.text)
-    for mentioned_user in users:
-        create_notification(
-            recipient=mentioned_user,
-            actor=comment.created_by,
-            notification_type="task_mention",
-            target_type="task",
-            target_id=comment.post_id,
-            secondary_target_type="comment",
-            secondary_target_id=comment.pk,
-            data={
-                "text": f"{_actor_name(comment.created_by)} te mencionó en un comentario.",
-                "title": comment.post.title,
-                "excerpt": excerpt,
-            },
-            dedupe_key=f"task-mention:{comment.pk}:{mentioned_user.pk}",
-        )
 
 
 def _notify_monthly_petition_top_five():
@@ -256,7 +224,7 @@ def _notify_task_tag(instance):
         notification_type="task_tag",
         target_type="task",
         target_id=instance.task_id,
-        text=f"{_actor_name(instance.tagged_by)} te etiquetó en una publicación",
+        text=f"{_actor_name(instance.tagged_by)} te etiquetó en {'una historia' if task.is_story else 'una publicación'}.",
         data={"task_title": _excerpt(task.title, 80)},
     )
 
@@ -319,7 +287,6 @@ def retire_app_like_requests_without_app_likes(sender, instance, **kwargs):
 def notify_task_comment(sender, instance, created, **kwargs):
     if not created:
         return
-    _notify_comment_mentions(instance)
     recipient = instance.parent.created_by if instance.parent else instance.post.user
     if not recipient:
         return
@@ -401,6 +368,17 @@ def notify_task_share(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=SharedTask)
 def retire_task_share(sender, instance, **kwargs):
     _retire(instance, kwargs.get("origin"))
+
+
+@receiver(post_save, sender=NewPeticionCommentPost)
+def notify_task_comment_mentions(sender, instance, **kwargs):
+    """También al editarlo: avisa a quien se agregó (una vez por comentario)."""
+    mentions.notify_comment_mentions(instance)
+
+
+@receiver(post_save, sender=SharedTaskComment)
+def notify_shared_task_comment_mentions(sender, instance, **kwargs):
+    mentions.notify_shared_comment_mentions(instance)
 
 
 @receiver(post_save, sender=SharedTaskComment)
@@ -514,6 +492,30 @@ def notify_story_share(sender, instance, created, **kwargs):
         text=f"{_actor_name(instance.user)} compartió tu tarea en una historia.",
         data={"title": source.title, "excerpt": _excerpt(instance.description)},
     )
+
+
+# Cambios con los que una aportación puede empezar a mencionar a alguien o a verse.
+MENTION_TRIGGER_FIELDS = {"description", "is_hidden", "group_status", "testimonial_status"}
+
+
+@receiver(post_save, sender=Task)
+def notify_task_description_mentions(sender, instance, created, update_fields=None, **kwargs):
+    """Avisa a quienes menciona la descripción. Si se acaba de publicar (estaba oculta o
+    en revisión), también a quienes mencionan sus bloques, que ya estaban guardados."""
+    if update_fields is not None and not MENTION_TRIGGER_FIELDS.intersection(update_fields):
+        return
+    texts = [instance.description]
+    if not created:
+        for related in ("subtasks", "subfactores", "subfuentes"):
+            texts += list(getattr(instance, related).values_list("description", flat=True))
+    mentions.notify_description_mentions(instance, texts)
+
+
+@receiver(post_save, sender=SubTask)
+@receiver(post_save, sender=SubFactores)
+@receiver(post_save, sender=SubFuentes)
+def notify_block_mentions(sender, instance, **kwargs):
+    mentions.notify_description_mentions(instance.parent_task, [instance.description])
 
 
 @receiver(post_delete, sender=Task)

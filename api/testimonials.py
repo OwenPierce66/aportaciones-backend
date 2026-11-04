@@ -31,6 +31,8 @@ def _dedupe_key(tag):
 
 
 def _notify_tag(tag):
+    from .mentions import display_name
+
     comment = tag.comment
     task = comment.post
     if task.is_hidden:
@@ -46,7 +48,11 @@ def _notify_tag(tag):
         secondary_target_type="comment",
         secondary_target_id=comment.pk,
         data={
-            "text": f"{author.username or 'Alguien'} te etiquetó en un comentario. ¿Lo muestras en tu perfil como testimonio?",
+            "text": (
+                f"{display_name(author)} te etiquetó en "
+                f"{'una respuesta a un comentario' if comment.parent_id else 'un comentario'}. "
+                "¿Lo muestras en tu perfil como testimonio?"
+            ),
             "testimonial_id": str(tag.pk),
             "title": task.title,
             "excerpt": (comment.text or "")[:140],

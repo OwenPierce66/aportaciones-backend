@@ -77,7 +77,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = []
+    # createsuperuser también lo pide: sin usuario no se le puede mencionar ni etiquetar.
+    REQUIRED_FIELDS = ["username"]
 
     class Meta:
         verbose_name = _("user")

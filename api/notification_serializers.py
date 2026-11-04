@@ -38,7 +38,8 @@ class NotificationSerializer(serializers.ModelSerializer):
         return {
             "id": str(obj.actor_id),
             "username": obj.actor.username,
-            "name": full_name or obj.actor.username or obj.actor.email,
+            # Nunca el correo: el aviso lo ve otra persona.
+            "name": full_name or obj.actor.username or "",
             "image": latest_user_image_url(obj.actor, self.context.get("request")),
         }
 

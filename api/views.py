@@ -46,7 +46,7 @@ from .serializers import (
     PosttSerializer
 )
 from . import models as ms
-from . import app_like_requests
+from . import app_like_requests, mentions
 from .app_account import app_account_email, app_account_id_for, get_app_account
 from .notifications import retire_notification, create_notification
 from .signals import notify_task_tags_on_publish
@@ -296,7 +296,11 @@ def apply_task_filters(queryset, params, owner_id=None, request_user=None, categ
         queryset = prioritize_category_path(queryset, category, category_field)
     if status_filter:
         queryset = filter_by_categories(queryset, status_filter, category_field)
-    if search:
+    hashtag = mentions.hashtag_in_search(raw_search)
+    if hashtag:
+        # "#viaje" busca ese hashtag como palabra completa (no #viajes).
+        queryset = queryset.filter(mentions.hashtag_q(hashtag, "title", "description"))
+    elif search:
         # Free text is deliberately transient: it searches existing content
         # without creating catalog categories.
         search_query = (
@@ -1406,7 +1410,8 @@ def story_viewers(request, story_id):
             users_by_id[user_id] = {
                 "id": user_id,
                 "username": user.username,
-                "name": full_name or user.username or user.email,
+                # Nunca el correo: esta lista la ve el dueño de la historia.
+                "name": full_name or user.username or "",
                 "image": image,
                 "user_image": image,
                 "profile": ProfileSerializer(user.profile).data,
@@ -1906,7 +1911,10 @@ class SharedTaskListCreateView(generics.ListCreateAPIView):
             qs = filter_by_categories(qs, category, "task__categories")
         if status_filter:
             qs = filter_by_categories(qs, status_filter, "task__categories")
-        if search:
+        hashtag = mentions.hashtag_in_search(raw_search)
+        if hashtag:
+            qs = qs.filter(mentions.hashtag_q(hashtag, "task__title", "task__description", "description"))
+        elif search:
             qs = qs.filter(
                 Q(task__title__icontains=raw_search)
                 | Q(task__description__icontains=raw_search)
@@ -3409,6 +3417,11 @@ class PostListCreateView(generics.ListCreateAPIView):
                 qs = qs.filter(user_id=UUID(str(user_id)))
             except ValueError:
                 qs = qs.none()
+        # Un #hashtag tocado en el foro: los posts que lo usan (en el post o en sus respuestas).
+        raw_hashtag = (self.request.query_params.get('hashtag') or '').strip().lstrip('#')
+        if raw_hashtag:
+            hashtag = mentions.hashtag_in_search(f"#{raw_hashtag}")
+            qs = qs.filter(mentions.hashtag_q(hashtag, "title", "content", "forum_replies__content")).distinct() if hashtag else qs.none()
         # Mismo filtro por niveles que las tareas: primero los de esa ruta exacta.
         return filter_by_category_path(qs, self.request.query_params.get('category'))
 

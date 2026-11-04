@@ -18,6 +18,7 @@ from . import profile_activity
 from . import profile_visits
 from . import task_stats
 from . import task_map
+from . import mentions
 from . import save_collections
 from . import task_save_views
 # ─── Vistas JWT con throttling propio ────────────────────────────────────────
@@ -78,6 +79,8 @@ urlpatterns = [
     path('stories/<uuid:story_id>/save/', views.save_story_to_aportaciones, name='story-save'),
     path('feed/', views.FeedView.as_view(), name='feed'),
     path('tasks/map/', task_map.map_tasks, name='task-map'),
+    path('hashtags/', mentions.hashtag_suggestions, name='hashtag-suggestions'),
+    path('users/by-username/<str:username>/', mentions.user_by_username, name='user-by-username'),
     path('tasks/<uuid:id>/', views.TaskDetailView.as_view(), name='task-detail'),
     path('tasks/<uuid:task_id>/like/', views.toggle_task_like, name='task-like'),
     path('tasks/<uuid:task_id>/stats/', task_stats.task_stats, name='task-stats'),
