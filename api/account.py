@@ -2,8 +2,9 @@
 
 - Recuperar: se envía un código de 6 dígitos que vence en 15 minutos. La respuesta es la
   misma exista o no la cuenta, para no revelar qué correos están registrados.
-- Eliminar: pide la contraseña, cancela los cobros en Stripe y borra la cuenta con todo lo
-  suyo, incluidos los archivos que subió. Si Stripe falla, la cuenta sigue intacta: borrarla
+- Eliminar: pide la contraseña o volver a elegir la cuenta de Google del mismo correo (las
+  cuentas creadas con Google no tienen contraseña), cancela los cobros en Stripe y borra la
+  cuenta con todo lo suyo, incluidos los archivos que subió. Si Stripe falla, la cuenta sigue intacta: borrarla
   dejaría cobros activos sin que nadie pueda cancelarlos.
 """
 import logging
@@ -37,6 +38,7 @@ from . import models as ms
 from . import throttling as ts
 from .app_account import app_account_email
 from .community_groups import hand_over_groups
+from .google_auth import verify_google_id_token
 from .subscriptions import SubscriptionsUnavailable, end_billing, refresh_profile_subscription
 
 logger = logging.getLogger(__name__)
@@ -252,7 +254,19 @@ def erase_account(user):
 @throttle_classes([ts.DeleteAccountThrottle])
 def delete_account(request):
     user = request.user
-    if not user.check_password(str(request.data.get("password") or "")):
+    id_token = request.data.get("id_token")
+    if id_token:
+        claims = verify_google_id_token(str(id_token))
+        if claims is None:
+            return Response(
+                {"id_token": ["No pudimos verificar tu cuenta de Google. Inténtalo de nuevo."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if claims["email"].lower() != user.email.lower():
+            return Response(
+                {"id_token": [f"Elige la cuenta de Google {user.email}."]}, status=status.HTTP_400_BAD_REQUEST,
+            )
+    elif not user.check_password(str(request.data.get("password") or "")):
         return Response({"password": ["La contraseña no es correcta."]}, status=status.HTTP_400_BAD_REQUEST)
     if user.is_staff or user.is_superuser or user.email.lower() == app_account_email().lower():
         return Response(

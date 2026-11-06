@@ -218,6 +218,31 @@ class DeleteAccountTests(AccountTestCase):
     def test_needs_a_session(self):
         self.assertEqual(APIClient().post(reverse("user-delete"), {"password": PASSWORD}, format="json").status_code, 401)
 
+    def delete_with_google(self, claims):
+        with mock.patch("api.account.verify_google_id_token", return_value=claims) as verify:
+            response = self.client.post(reverse("user-delete"), {"id_token": "token-de-google"}, format="json")
+        verify.assert_called_once_with("token-de-google")
+        return response
+
+    def test_an_account_made_with_google_confirms_with_google(self):
+        google = User.objects.create_user(email="ana.lopez@gmail.com", username="analopez")
+        self.client.force_authenticate(google)
+        self.assertFalse(self.client.get(reverse("user-me")).data["has_password"])
+        self.assertEqual(self.delete_with_google({"email": "Ana.Lopez@gmail.com"}).status_code, 204)
+        self.assertFalse(User.objects.filter(pk=google.pk).exists())
+
+    def test_an_account_with_password_can_also_confirm_with_google(self):
+        self.assertTrue(self.client.get(reverse("user-me")).data["has_password"])
+        self.assertEqual(self.delete_with_google({"email": "ana@example.com"}).status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.ana.pk).exists())
+
+    def test_another_google_account_or_a_bad_token_deletes_nothing(self):
+        for claims in ({"email": "luis@example.com"}, None):
+            response = self.delete_with_google(claims)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("id_token", response.data)
+        self.assertTrue(User.objects.filter(pk=self.ana.pk).exists())
+
     def test_deletes_everything_of_hers_and_nothing_of_anyone_else(self):
         hers = ms.Task.objects.create(user=self.ana, title="Suya", pch="consejos")
         his = ms.Task.objects.create(user=self.luis, title="De Luis", pch="consejos")

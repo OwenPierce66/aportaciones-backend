@@ -465,6 +465,8 @@ class UserMeView(APIView):
         data = dict(serializer.data)
         profile = getattr(request.user, "profile", None)
         data["social_links"] = getattr(profile, "social_links", None) or {}
+        # Las cuentas creadas con Google no tienen: al eliminarla, confirman con Google.
+        data["has_password"] = request.user.has_usable_password()
         return Response(data)
 
     def patch(self, request, *args, **kwargs):
