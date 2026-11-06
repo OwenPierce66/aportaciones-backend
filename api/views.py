@@ -47,6 +47,7 @@ from .serializers import (
 )
 from . import models as ms
 from . import app_like_requests, mentions
+from .account import revoke_sessions
 from .app_account import app_account_email, app_account_id_for, get_app_account
 from .notifications import retire_notification, create_notification
 from .signals import notify_task_tags_on_publish
@@ -499,7 +500,10 @@ class UserMeView(APIView):
                 context={'request': request},
             )
             serializer.is_valid(raise_exception=True)
+            changed_password = bool(serializer.validated_data.get("password"))
             serializer.save()
+            if changed_password:
+                revoke_sessions(user)
             if image_file:
                 ms.ImagenFija.objects.create(user=user, image=image_file)
             if social_links is not None:
@@ -512,6 +516,10 @@ class UserMeView(APIView):
         data["social_links"] = (
             ms.Profile.objects.filter(user=user).values_list("social_links", flat=True).first() or {}
         )
+        if changed_password:
+            # Las demás sesiones se cerraron; esta sigue con estos tokens nuevos.
+            refresh = RefreshToken.for_user(user)
+            data.update(refresh=str(refresh), access=str(refresh.access_token))
         return Response(data)
 
 

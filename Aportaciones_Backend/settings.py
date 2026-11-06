@@ -124,6 +124,8 @@ WSGI_APPLICATION = "Aportaciones_Backend.wsgi.application"
 
 
 AUTH_USER_MODEL = "api.User"
+# Entrar con el correo o el nombre de usuario, sin distinguir mayúsculas (también en /admin/).
+AUTHENTICATION_BACKENDS = ["api.login.EmailOrUsernameBackend"]
 
 
 db_url = os.getenv("DATABASE_URL")

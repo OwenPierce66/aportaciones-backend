@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import (
 
 from . import account
 from . import google_auth
+from .login import LoginSerializer
 from . import push_views
 from . import subscription_views
 from . import petition_support_views
@@ -24,6 +25,7 @@ from . import save_collections
 from . import task_save_views
 # ─── Vistas JWT con throttling propio ────────────────────────────────────────
 class ThrottledLoginView(TokenObtainPairView):
+    serializer_class = LoginSerializer
     throttle_classes = [ts.LoginThrottle]
 
 

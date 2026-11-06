@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Case, Count, IntegerField, OuterRef, Q, Subquery, Value, When
 from django.conf import settings
 from . import models as ms
@@ -122,8 +124,10 @@ class ImagenFijaSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
     password = serializers.CharField(write_only=True, required=False, style={"input_type": "password"})
+    # Para cambiar la contraseña o el correo hay que confirmar la contraseña actual.
+    current_password = serializers.CharField(write_only=True, required=False, style={"input_type": "password"})
     user_image = serializers.ImageField(write_only=True, required=False)
-    
+
     class Meta:
         model = User
         fields = [
@@ -133,6 +137,7 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "password",
+            "current_password",
             "profile",
             "user_image",
             "is_superuser",
@@ -147,6 +152,46 @@ class UserSerializer(serializers.ModelSerializer):
             "date_joined",
             "updated_at",
         ]
+
+    def _in_use(self, **lookup):
+        others = User.objects.filter(**lookup)
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
+        return others.exists()
+
+    # Se entra sin distinguir mayúsculas, así que Ana y ana no pueden ser dos cuentas.
+    def validate_email(self, value):
+        if self._in_use(email__iexact=value):
+            raise serializers.ValidationError("Ya hay una cuenta con ese correo.")
+        return value
+
+    def validate_username(self, value):
+        if value and self._in_use(username__iexact=value):
+            raise serializers.ValidationError("Ese nombre de usuario ya está en uso.")
+        return value
+
+    def validate(self, attrs):
+        current_password = attrs.pop("current_password", "")
+        password = attrs.get("password")
+        user = self.instance
+        if user is None:
+            if not password:
+                raise serializers.ValidationError({"password": ["Escribe una contraseña."]})
+            user = User(**{field: attrs.get(field) or "" for field in ("email", "username", "first_name", "last_name")})
+        else:
+            changes_email = "email" in attrs and attrs["email"] != user.email
+            # Una cuenta creada con Google no tiene contraseña: la primera se pone sin la actual.
+            changes_password = bool(password) and user.has_usable_password()
+            if (changes_email or changes_password) and not user.check_password(current_password):
+                raise serializers.ValidationError({"current_password": [
+                    "Tu contraseña actual no es correcta." if current_password else "Escribe tu contraseña actual."
+                ]})
+        if password:
+            try:
+                validate_password(password, user=user)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages})
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop("password")

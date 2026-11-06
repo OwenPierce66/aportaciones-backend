@@ -107,7 +107,7 @@ def _code_is_valid(user, code):
         return False
 
 
-def _revoke_sessions(user):
+def revoke_sessions(user):
     BlacklistedToken.objects.bulk_create(
         [BlacklistedToken(token=token) for token in OutstandingToken.objects.filter(user=user)],
         ignore_conflicts=True,
@@ -158,8 +158,8 @@ def password_reset_confirm(request):
         user.set_password(new_password)
         user.save(update_fields=["password", "updated_at"])
         user.password_reset_codes.all().delete()
-        _revoke_sessions(user)
-    # El login distingue mayúsculas: la app necesita el correo tal como está en la cuenta.
+        revoke_sessions(user)
+    # La app deja escrito este correo en Iniciar sesión.
     return Response({"detail": "Tu contraseña se cambió. Ya puedes iniciar sesión.", "email": user.email})
 
 
