@@ -37,6 +37,16 @@ class TranslationNotConfigured(TranslationError):
     """Falta la clave o el proveedor no existe."""
 
 
+def _post(provider, url, **kwargs):
+    """`requests.post` que convierte un corte de red o un tiempo agotado en `TranslationError`."""
+    try:
+        return requests.post(url, **kwargs)
+    except requests.RequestException as exc:
+        # Solo el tipo: el mensaje de requests incluye la URL, y Google lleva ahí la clave.
+        logger.warning("No se pudo conectar con %s (%s).", provider, type(exc).__name__)
+        raise TranslationError(f"No se pudo conectar con {provider}.") from exc
+
+
 def normalize_language(code, default=DEFAULT_LANGUAGE):
     """Devuelve un código de `SUPPORTED_LANGUAGES` ('en-US' -> 'en') o `default`."""
     base = str(code or "").strip().lower().replace("_", "-").split("-")[0]
@@ -63,7 +73,8 @@ class DeepLProvider:
         }
         if source:
             payload["source_lang"] = source.upper()
-        response = requests.post(
+        response = _post(
+            "DeepL",
             self.url,
             json=payload,
             headers={"Authorization": f"DeepL-Auth-Key {self.api_key}"},
@@ -92,7 +103,8 @@ class GoogleProvider:
         payload = {"q": text, "target": target, "format": "text"}
         if source:
             payload["source"] = source
-        response = requests.post(
+        response = _post(
+            "Google",
             "https://translation.googleapis.com/language/translate/v2",
             params={"key": self.api_key},
             json=payload,
@@ -153,7 +165,8 @@ class GeminiProvider:
                 "responseSchema": self._SCHEMA,
             },
         }
-        response = requests.post(
+        response = _post(
+            "Gemini",
             self.ENDPOINT.format(model=self.model),
             json=payload,
             headers={"x-goog-api-key": self.api_key},

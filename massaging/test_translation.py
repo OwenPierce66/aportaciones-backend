@@ -294,6 +294,20 @@ class ProviderTests(SimpleTestCase):
                 with self.assertRaises(TranslationError):
                     GeminiProvider("key").translate("Hola", "en")
 
+    def test_network_failures_become_translation_errors_without_logging_the_key(self):
+        import requests
+        from .translation import GeminiProvider
+        url_with_key = "https://translation.googleapis.com/language/translate/v2?key=secreta"
+        for provider in (DeepLProvider("abc:fx"), GoogleProvider("secreta"), GeminiProvider("secreta")):
+            for failure in (requests.Timeout(f"Read timed out: {url_with_key}"),
+                            requests.ConnectionError(f"Max retries exceeded with url: {url_with_key}")):
+                with self.subTest(provider=provider.name, failure=type(failure).__name__):
+                    with mock.patch("massaging.translation.requests.post", side_effect=failure):
+                        with self.assertLogs("massaging.translation", level="WARNING") as logs:
+                            with self.assertRaises(TranslationError):
+                                provider.translate("Hola", "en")
+                    self.assertNotIn("secreta", " ".join(logs.output))
+
     @override_settings(TRANSLATION_PROVIDER="gemini", GEMINI_API_KEY="k", GEMINI_TRANSLATE_MODEL="gemini-3.5-flash-lite")
     def test_get_provider_gemini_uses_configured_model(self):
         from .translation import get_provider
